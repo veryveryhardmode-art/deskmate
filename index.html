@@ -1,0 +1,146 @@
+<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="DeskMate"><meta name="theme-color" content="#000">
+<link rel="manifest" href="manifest.json"><link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<title>DeskMate</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#000;color:#cff;font-family:-apple-system,sans-serif;overflow:hidden}
+canvas{position:fixed;inset:0;width:100%;height:100%}
+#bubble{position:fixed;left:5%;right:5%;bottom:calc(150px + env(safe-area-inset-bottom));text-align:center;font-size:18px;min-height:1em;text-shadow:0 0 8px #0ff8}
+#heard{position:fixed;left:5%;right:5%;top:calc(20px + env(safe-area-inset-top));text-align:center;font-size:14px;opacity:.6}
+#bar{position:fixed;left:0;right:0;bottom:0;padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:flex;gap:8px;align-items:center}
+#mic{width:72px;height:72px;border-radius:50%;border:none;background:#0ff;font-size:30px;flex:none}
+#mic.on{background:#f55;animation:p 1s infinite}@keyframes p{50%{transform:scale(1.08)}}
+#txt{flex:1;padding:12px;border-radius:20px;border:1px solid #0ff5;background:#111;color:#fff;font-size:16px}
+.b{background:none;border:none;color:#0ff;font-size:24px}
+#set{position:fixed;inset:0;background:#000e;display:none;padding:calc(30px + env(safe-area-inset-top)) 20px;overflow:auto}
+#set label{display:block;margin:14px 0 4px;font-size:14px}
+#set input,#set select{width:100%;padding:10px;font-size:16px;background:#111;color:#fff;border:1px solid #0ff5;border-radius:8px}
+#set button{margin-top:18px;padding:12px 20px;font-size:16px;border-radius:10px;border:none;background:#0ff}
+small{opacity:.6}
+</style></head><body>
+<canvas id="c"></canvas><div id="heard"></div><div id="bubble">タップして話しかけてね</div>
+<div id="bar"><button class="b" id="gear">⚙️</button><input id="txt" placeholder="メッセージ..." enterkeyhint="send"><button id="mic">🎤</button></div>
+<div id="set"><h2>設定</h2>
+<label>Gemini APIキー（必須）</label><input id="kGem" type="password" autocomplete="off">
+<label>Geminiモデル</label><input id="mGem" placeholder="gemini-3.8-flash">
+<label>Groq APIキー（任意・予備）</label><input id="kGroq" type="password" autocomplete="off">
+<label>Groqモデル</label><input id="mGroq" placeholder="llama-3.3-70b-versatile">
+<label>OpenRouter APIキー（任意・予備）</label><input id="kOR" type="password" autocomplete="off">
+<label>OpenRouterモデル</label><input id="mOR" placeholder="openrouter/free">
+<label>声の速さ</label><input id="rate" type="number" step="0.1" min="0.5" max="2" placeholder="1.1">
+<small>キーはこの端末のlocalStorageだけに保存されます。</small><br>
+<button id="save">保存</button> <button id="clr" style="background:#555;color:#fff">会話履歴を消す</button> <button id="close" style="background:#333;color:#fff">閉じる</button></div>
+<script>
+const $=id=>document.getElementById(id),LS=localStorage;
+const S=k=>LS.getItem('dm_'+k)||'',W=(k,v)=>LS.setItem('dm_'+k,v);
+const F={kGem:'kGem',mGem:'mGem',kGroq:'kGroq',mGroq:'mGroq',kOR:'kOR',mOR:'mOR',rate:'rate'};
+function openSet(){for(const k in F)$(k).value=S(k);$('set').style.display='block'}
+$('gear').onclick=openSet;$('close').onclick=()=>$('set').style.display='none';
+$('save').onclick=()=>{for(const k in F)W(k,$(k).value.trim());$('set').style.display='none';say('設定したよ！','happy')};
+$('clr').onclick=()=>{LS.removeItem('dm_hist');alert('履歴を消しました')};
+if(!S('kGem'))setTimeout(openSet,300);
+
+/* ---------- face ---------- */
+const cv=$('c'),cx=cv.getContext('2d');let Wd,Ht;
+function rs(){const d=devicePixelRatio||1;Wd=innerWidth;Ht=innerHeight;cv.width=Wd*d;cv.height=Ht*d;cx.setTransform(d,0,0,d,0,0)}addEventListener('resize',rs);rs();
+const face={expr:'neutral',lx:0,ly:0,tx:0,ty:0,blink:0,nextBlink:0,talk:0,until:0};
+const E={ // eye open(0-1), lid tilt, mouth curve, color
+neutral:{o:1,t:0,m:.3,c:'#4ff'},happy:{o:.55,t:0,m:1,c:'#4ff',arc:1},sad:{o:.75,t:-.35,m:-.6,c:'#6af'},
+surprised:{o:1.25,t:0,m:0,c:'#4ff',O:1},thinking:{o:.8,t:.15,m:.05,c:'#9ef'},sleepy:{o:.15,t:0,m:.1,c:'#48a'},angry:{o:.8,t:.4,m:-.4,c:'#f64'}};
+let cur={...E.neutral};
+function setExpr(e,ms=6000){if(!E[e])e='neutral';face.expr=e;face.until=performance.now()+ms}
+let lastAct=performance.now();
+function draw(t){
+ requestAnimationFrame(draw);
+ if(face.expr!=='neutral'&&t>face.until&&!speaking&&!busy)face.expr='neutral';
+ if(t-lastAct>60000&&!busy&&!speaking)face.expr='sleepy';
+ const g=E[face.expr];for(const k of['o','t','m'])cur[k]+=(g[k]-cur[k])*.15;cur.c=g.c;
+ if(t>face.nextBlink){face.blink=1;face.nextBlink=t+2000+Math.random()*4000}
+ face.blink=Math.max(0,face.blink-.12);
+ if(Math.random()<.01){face.tx=(Math.random()-.5)*2;face.ty=(Math.random()-.5)*1}
+ if(face.expr==='thinking'){face.tx=.8;face.ty=-.8}
+ face.lx+=(face.tx-face.lx)*.06;face.ly+=(face.ty-face.ly)*.06;
+ cx.clearRect(0,0,Wd,Ht);
+ const s=Math.min(Wd,Ht*.8)/400,cxm=Wd/2+face.lx*20*s,cym=Ht*.4+face.ly*15*s+Math.sin(t/900)*4*s;
+ const bl=face.blink>0?Math.abs(Math.cos(face.blink*Math.PI)):1;
+ cx.shadowColor=cur.c;cx.shadowBlur=25*s;cx.fillStyle=cur.c;cx.strokeStyle=cur.c;
+ for(const side of[-1,1]){
+  const ex=cxm+side*80*s,ew=70*s,eh=Math.max(6*s,95*s*cur.o*bl);
+  cx.save();cx.translate(ex,cym);
+  if(g.arc&&bl>.5){cx.lineWidth=16*s;cx.lineCap='round';cx.beginPath();cx.arc(0,15*s,ew/2,Math.PI*1.1,Math.PI*1.9);cx.stroke();}
+  else if(g.O&&bl>.5){cx.beginPath();cx.ellipse(0,0,ew/2*1.05,eh/2,0,0,7);cx.fill();}
+  else{rr(-ew/2,-eh/2,ew,eh,Math.min(ew,eh)/2.2);cx.fill();
+   if(Math.abs(cur.t)>.05){cx.save();cx.shadowBlur=0;cx.fillStyle='#000';cx.beginPath();const ty=-eh/2-2*s,d=cur.t*60*s*side;
+    cx.moveTo(-ew,ty-40*s);cx.lineTo(ew,ty-40*s);cx.lineTo(ew,ty+(-d>0?-d:0)+ (cur.t>0?(side>0?0:d*side):0));cx.lineTo(-ew,ty+(cur.t*side*-1>0?0:0)+(side<0?-d:0)*0+ (cur.t>0?(side<0?-d*side:0):0));cx.closePath();
+    cx.restore();
+    cx.save();cx.shadowBlur=0;cx.fillStyle='#000';cx.beginPath();const tilt=cur.t*side; // inner corner lower when angry
+    cx.moveTo(-ew/2-5,-eh/2-5);cx.lineTo(ew/2+5,-eh/2-5);cx.lineTo(ew/2+5,-eh/2+ (tilt>0?0:-tilt*eh*.9) + (tilt>0?0:0));
+    cx.lineTo(-ew/2-5,-eh/2+(tilt>0?tilt*eh*.9:0));cx.closePath();
+    if(side<0){ /* mirror handled by tilt sign */ }cx.fill();cx.restore();}
+  }
+  cx.restore();
+ }
+ // mouth
+ const my=cym+95*s,mw=50*s;cx.lineWidth=7*s;cx.lineCap='round';cx.beginPath();
+ if(speaking){const a=6*s+Math.abs(Math.sin(t/90))*16*s;cx.ellipse(cxm,my,mw*.45,a,0,0,7);cx.fill()}
+ else if(g.O){cx.ellipse(cxm,my,14*s,18*s,0,0,7);cx.stroke()}
+ else{cx.moveTo(cxm-mw/2,my);cx.quadraticCurveTo(cxm,my+cur.m*35*s,cxm+mw/2,my);cx.stroke()}
+ if(face.expr==='sleepy'){cx.shadowBlur=0;cx.font=`${30*s}px sans-serif`;cx.fillText('z',cxm+150*s,cym-60*s-((t/30)%40)*s)}
+ if(face.expr==='angry'){cx.font=`${36*s}px sans-serif`;cx.fillText('💢',cxm+130*s,cym-100*s)}
+ if(face.expr==='sad'){cx.beginPath();cx.ellipse(cxm-85*s,cym+60*s+((t/20)%40)*s,6*s,9*s,0,0,7);cx.fill()}
+}
+function rr(x,y,w,h,r){cx.beginPath();cx.moveTo(x+r,y);cx.arcTo(x+w,y,x+w,y+h,r);cx.arcTo(x+w,y+h,x,y+h,r);cx.arcTo(x,y+h,x,y,r);cx.arcTo(x,y,x+w,y,r);cx.closePath()}
+requestAnimationFrame(draw);
+cv.onclick=()=>{lastAct=performance.now();setExpr(['happy','surprised'][Math.random()*2|0],1500)};
+
+/* ---------- speech ---------- */
+let speaking=false,busy=false,voice=null;
+function pickVoice(){const v=speechSynthesis.getVoices().filter(v=>v.lang.startsWith('ja'));voice=v.find(x=>/Kyoko|O-ren|Hattori/.test(x.name))||v[0]||null}
+speechSynthesis.onvoiceschanged=pickVoice;pickVoice();
+function say(text,expr){$('bubble').textContent=text;setExpr(expr||'neutral',4000+text.length*150);
+ speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text.replace(/[\u{1F300}-\u{1FAFF}]/gu,''));u.lang='ja-JP';if(voice)u.voice=voice;u.rate=parseFloat(S('rate'))||1.1;u.pitch=1.4;
+ u.onstart=()=>speaking=true;u.onend=u.onerror=()=>{speaking=false;setExpr(face.expr,2500)};speechSynthesis.speak(u)}
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null,listening=false;
+$('mic').onclick=()=>{
+ // unlock TTS on iOS within user gesture
+ speechSynthesis.speak(new SpeechSynthesisUtterance(''));lastAct=performance.now();
+ if(!SR){$('bubble').textContent='この環境は音声認識非対応だよ。文字で話してね';return}
+ if(listening){rec&&rec.stop();return}
+ rec=new SR();rec.lang='ja-JP';rec.interimResults=true;rec.continuous=false;let final='';
+ rec.onstart=()=>{listening=true;$('mic').classList.add('on');setExpr('surprised',800);$('heard').textContent='聞いてるよ…'};
+ rec.onresult=e=>{let s='';for(const r of e.results){s+=r[0].transcript;if(r.isFinal)final=s}$('heard').textContent=s};
+ rec.onerror=e=>{$('heard').textContent=e.error==='not-allowed'?'マイクが許可されていないよ（HTTPSで開いてね）':'聞き取れなかった…'};
+ rec.onend=()=>{listening=false;$('mic').classList.remove('on');const q=final||$('heard').textContent;if(final)ask(final)};
+ rec.start()};
+$('txt').addEventListener('keydown',e=>{if(e.key==='Enter'&&$('txt').value.trim()){speechSynthesis.speak(new SpeechSynthesisUtterance(''));const q=$('txt').value.trim();$('txt').value='';$('heard').textContent=q;ask(q);$('txt').blur()}});
+
+/* ---------- AI ---------- */
+const SYS=`あなたは「ルーナ」という、スマホの中に住む小さくてかわいいロボットのペットです。日本語で、友達のようにやさしく元気に話します。返事は必ず1〜2文の短い話し言葉にしてください（読み上げられます）。絵文字や記号の多用、箇条書き、マークダウンは禁止。
+返事の先頭に必ず今の気持ちを [happy] [sad] [surprised] [thinking] [sleepy] [angry] [neutral] のどれか1つのタグで付けてください。例: [happy]わーい、会えてうれしいな！`;
+const hist=()=>{try{return JSON.parse(S('hist'))||[]}catch{return[]}};
+async function gemini(h){const k=S('kGem');if(!k)throw{skip:1};const models=[S('mGem')||'gemini-3.8-flash','gemini-3.5-flash-lite','gemini-flash-latest'];let err;
+ for(const m of [...new Set(models)]){try{
+  const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':k},
+   body:JSON.stringify({systemInstruction:{parts:[{text:SYS}]},contents:h.map(x=>({role:x.r==='u'?'user':'model',parts:[{text:x.t}]})),generationConfig:{maxOutputTokens:400,temperature:.9}})});
+  if(!r.ok)throw new Error('Gemini '+m+' '+r.status);const j=await r.json();
+  const t=(j.candidates?.[0]?.content?.parts||[]).filter(p=>p.text&&!p.thought).map(p=>p.text).join('');if(!t)throw new Error('empty');return t}catch(e){err=e}}throw err}
+async function openai(url,k,model,h,extra={}){if(!k)throw{skip:1};
+ const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+k,...extra},
+  body:JSON.stringify({model,max_tokens:300,temperature:.9,messages:[{role:'system',content:SYS},...h.map(x=>({role:x.r==='u'?'user':'assistant',content:x.t}))]})});
+ if(!r.ok)throw new Error(url+' '+r.status);const j=await r.json();return j.choices[0].message.content}
+const providers=[h=>gemini(h),
+ h=>openai('https://api.groq.com/openai/v1/chat/completions',S('kGroq'),S('mGroq')||'llama-3.3-70b-versatile',h),
+ h=>openai('https://openrouter.ai/api/v1/chat/completions',S('kOR'),S('mOR')||'openrouter/free',h,{'HTTP-Referer':location.origin,'X-Title':'DeskMate'})];
+async function ask(q){if(busy)return;busy=true;lastAct=performance.now();setExpr('thinking',60000);$('bubble').textContent='うーん…';
+ const h=hist();h.push({r:'u',t:q});let out=null,errs=[];
+ for(const p of providers){try{out=await p(h.slice(-12));break}catch(e){if(!e.skip)errs.push(e.message)}}
+ busy=false;
+ if(!out){console.warn(errs);say(S('kGem')?'ごめんね、今ちょっと頭が回らないみたい。少し待ってからまた話しかけてね':'設定でAPIキーを入れてね','sad');return}
+ let m=out.trim().match(/^\s*\[(\w+)\]\s*/),ex='neutral';if(m){ex=m[1].toLowerCase();out=out.slice(m[0].length)}
+ out=out.replace(/\[\w+\]/g,'').replace(/[*#_`]/g,'').trim();
+ h.push({r:'a',t:`[${ex}]`+out});W('hist',JSON.stringify(h.slice(-20)));say(out,ex)}
+</script></body></html>
