@@ -7,14 +7,14 @@
 <title>DeskMate</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;height:100%;background:#000;color:#cff;font-family:-apple-system,sans-serif;overflow:hidden}
+html,body{margin:0;width:100%;height:100%;height:100dvh;overflow:hidden;overflow-x:hidden;max-width:100vw;background:#000;color:#cff;font-family:-apple-system,sans-serif;overflow:hidden}
 canvas{position:fixed;inset:0;width:100%;height:100%}
 #bubble{position:fixed;left:5%;right:5%;bottom:calc(150px + env(safe-area-inset-bottom));text-align:center;font-size:18px;min-height:1em;text-shadow:0 0 8px #0ff8}
 #heard{position:fixed;left:5%;right:5%;top:calc(20px + env(safe-area-inset-top));text-align:center;font-size:14px;opacity:.6}
-#bar{position:fixed;left:0;right:0;bottom:0;padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:flex;gap:8px;align-items:center}
+#bar{position:fixed;left:0;right:0;bottom:0;width:100%;max-width:100vw;overflow:hidden;padding:8px calc(8px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) calc(8px + env(safe-area-inset-left));display:flex;gap:4px;align-items:center}
 #mic{width:72px;height:72px;border-radius:50%;border:none;background:#0ff;font-size:30px;flex:none}
 #mic.on{background:#f55;animation:p 1s infinite}@keyframes p{50%{transform:scale(1.08)}}
-#txt{flex:1;padding:12px;border-radius:20px;border:1px solid #0ff5;background:#111;color:#fff;font-size:16px}
+#txt{flex:1 1 0;min-width:0;width:0;padding:10px 12px;border-radius:20px;border:1px solid #0ff5;background:#111;color:#fff;font-size:16px}
 .b{background:none;border:none;color:#0ff;font-size:24px}
 #set{position:fixed;inset:0;background:#000e;display:none;padding:calc(30px + env(safe-area-inset-top)) 20px;overflow:auto}
 #set label{display:block;margin:14px 0 4px;font-size:14px}
@@ -36,15 +36,16 @@ small{opacity:.6}
 .chip img{width:44px;height:44px;object-fit:cover;border-radius:6px}.chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chip button{padding:2px 7px;background:#f55}
 .b.on{background:#0ff3;border-radius:10px}
-#mic{width:60px;height:60px;font-size:26px}
-.b{font-size:22px;padding:4px;flex:none}
+#mic{width:52px;height:52px;font-size:24px;flex:none}
+.b{font-size:20px;padding:2px;flex:none;min-width:30px}
+#prog{position:fixed;top:calc(64px + env(safe-area-inset-top));left:5%;right:5%;text-align:center;font-size:13px;color:#ff6}
 #mode{position:fixed;top:calc(44px + env(safe-area-inset-top));left:0;right:0;text-align:center;font-size:13px;color:#ff6;display:none}
 </style></head><body>
 <canvas id="c"></canvas><div id="heard"></div><div id="bubble">タップして話しかけてね</div>
 <div id="mode">🔍 分析モード：プロンプトや画像を送ると詳しく分析するよ</div>
-<div id="log"></div><div id="chips"></div>
+<div id="prog"></div><div id="log"></div><div id="chips"></div>
 <input type="file" id="file" multiple accept="image/*,application/pdf,text/*,.txt,.md,.json,.csv,.html,.js,.ts,.py,.css,.xml,.yaml,.yml" hidden>
-<div id="bar"><button class="b" id="gear">⚙️</button><button class="b" id="logb">💬</button><button class="b" id="att">📎</button><button class="b" id="ana">🔍</button><input id="txt" placeholder="メッセージ（画像は貼り付けOK）" enterkeyhint="send"><button class="b" id="send">➤</button><button id="mic">🎤</button></div>
+<div id="bar"><button class="b" id="gear">⚙️</button><button class="b" id="logb">💬</button><button class="b" id="att">📎</button><button class="b" id="ana">🔍</button><input id="txt" placeholder="メッセージ" enterkeyhint="send"><button class="b" id="send">➤</button><button id="mic">🎤</button></div>
 <div id="set"><h2>設定</h2>
 <label>Gemini APIキー（必須）</label><input id="kGem" type="password" autocomplete="off">
 <label>Geminiモデル</label><input id="mGem" placeholder="gemini-3.8-flash">
@@ -143,18 +144,21 @@ $('txt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.pr
 let atts=[];const TXT=/^(text\/|application\/(json|xml|javascript|x-yaml))|\.(txt|md|json|csv|html?|js|ts|py|css|xml|ya?ml)$/i;
 $('att').onclick=()=>$('file').click();
 $('file').onchange=async e=>{for(const f of e.target.files)await addFile(f);e.target.value=''};
-document.addEventListener('paste',async e=>{const it=[...(e.clipboardData?.items||[])].filter(i=>i.kind==='file');if(!it.length)return;e.preventDefault();for(const i of it){const f=i.getAsFile();if(f)await addFile(f)}});
+const BIG=5000;function bigText(t,n){atts.push({kind:'txt',name:n||`貼り付け${atts.length+1}.txt`,text:t,mime:'text/plain'});chips()}
+$('txt').addEventListener('input',()=>{const v=$('txt').value;if(v.length>BIG){$('txt').value='';bigText(v)}});
+document.addEventListener('paste',async e=>{const pt=e.clipboardData?.getData('text/plain');if(pt&&pt.length>BIG){e.preventDefault();bigText(pt);return}const it=[...(e.clipboardData?.items||[])].filter(i=>i.kind==='file');if(!it.length)return;e.preventDefault();for(const i of it){const f=i.getAsFile();if(f)await addFile(f)}});
 const rdURL=f=>new Promise((ok,ng)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=ng;r.readAsDataURL(f)});
 async function shrink(f){const url=URL.createObjectURL(f);try{const im=await new Promise((ok,ng)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=ng;i.src=url});
  const k=Math.min(1,1536/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*k|0;c.height=im.height*k|0;c.getContext('2d').drawImage(im,0,0,c.width,c.height);return c.toDataURL('image/jpeg',.85)}finally{URL.revokeObjectURL(url)}}
 async function addFile(f){try{const name=f.name||('image.'+(f.type.split('/')[1]||'png'));let a;
  if(f.type.startsWith('image/')){let d;try{d=await shrink(f)}catch{d=await rdURL(f)}a={kind:'img',name,mime:d.slice(5,d.indexOf(';')),data:d.split(',')[1],thumb:d}}
- else if(f.type==='application/pdf'||/\.pdf$/i.test(name)){if(f.size>18e6){alert('PDFが大きすぎます（18MBまで）');return}const d=await rdURL(f);a={kind:'pdf',name,mime:'application/pdf',data:d.split(',')[1]}}
- else if(TXT.test(f.type)||TXT.test(name)){if(f.size>2e6){alert('テキストが大きすぎます');return}a={kind:'txt',name,text:await f.text()}}
+ else if(f.type==='application/pdf'||/\.pdf$/i.test(name)){if(f.size>2e9){alert('2GBまでです');return}a={kind:'pdf',name,mime:'application/pdf',blob:f,size:f.size}}
+ else if(TXT.test(f.type)||TXT.test(name)){if(f.size>200e6){alert('200MBまでです');return}a={kind:'txt',name,text:await f.text(),mime:'text/plain'}}
  else{alert('この形式は未対応です: '+name);return}
  atts.push(a);chips()}catch(e){alert('読み込み失敗: '+e.message)}}
+const fmtN=n=>n>=1e4?(n/1e4).toFixed(n>=1e5?0:1)+'万':String(n);
 function chips(){$('chips').innerHTML='';atts.forEach((a,i)=>{const d=document.createElement('div');d.className='chip';
- d.innerHTML=(a.thumb?`<img src="${a.thumb}">`:`<b>${a.kind==='pdf'?'📄':'📝'}</b>`)+`<span>${esc(a.name)}</span><button>×</button>`;
+ d.innerHTML=(a.thumb?`<img src="${a.thumb}">`:`<b>${a.kind==='pdf'?'📄':'📝'}</b>`)+`<span>${esc(a.name)}${a.text?` (${fmtN(a.text.length)}字)`:a.size?` (${(a.size/1e6).toFixed(1)}MB)`:''}</span><button>×</button>`;
  d.querySelector('button').onclick=()=>{atts.splice(i,1);chips()};$('chips').appendChild(d)})}
 
 /* ---------- chat log ---------- */
@@ -191,20 +195,59 @@ const ANA=`
 ## 被写体 / ## 服装 / ## ポーズ・表情 / ## 構図・カメラ / ## 背景・ライティング / ## 画風・スタイル / ## 品質タグ / ## 問題点（矛盾・重複・弱いタグ・ネガティブに入れるべきもの） / ## 改善版プロンプト（\`\`\`text prompt.txt のコードブロックで、必要ならネガティブも negative.txt で）
 画像の場合は、その画像を再現するためのタグ形式プロンプトも改善版として出してください。普通の文章プロンプトの場合は、目的・構造・曖昧な点・改善版を整理してください。`;
 const hist=()=>{try{return JSON.parse(S('hist'))||[]}catch{return[]}};
-function partsFor(x,multi){const p=[];let t=x.t||'';
- for(const a of x.a||[]){if(a.kind==='txt')t+=`\n\n[添付ファイル: ${a.name}]\n${a.text.slice(0,60000)}`;else if(multi)p.push({inline_data:{mime_type:a.mime,data:a.data}});else t+=`\n\n[${a.kind==='img'?'画像':'PDF'}「${a.name}」が添付されていますが、このモデルでは中身を見られません。そのことを伝えてください]`}
- if(!t.trim())t=multi?'これを見て':'(添付のみ)';p.unshift({text:t});return p}
-async function gemini(h,sys){const k=S('kGem');if(!k)throw{skip:1};const models=[S('mGem')||'gemini-3.8-flash','gemini-3.5-flash-lite','gemini-flash-latest'];let err;
- for(const m of [...new Set(models)]){try{
-  const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':k},
-   body:JSON.stringify({systemInstruction:{parts:[{text:sys}]},contents:h.map(x=>({role:x.r==='u'?'user':'model',parts:partsFor(x,true)})),generationConfig:{maxOutputTokens:8192,temperature:.9}})});
-  if(!r.ok)throw new Error('Gemini '+m+' '+r.status+' '+(await r.text()).slice(0,200));const j=await r.json();
-  const t=(j.candidates?.[0]?.content?.parts||[]).filter(p=>p.text&&!p.thought).map(p=>p.text).join('');if(!t)throw new Error('empty');return t}catch(e){err=e}}throw err}
+const GB='https://generativelanguage.googleapis.com';
+const estTok=s=>{let n=0;for(let i=0;i<s.length;i+=1){n+=s.charCodeAt(i)>255?1:.28}return n|0};
+const tb=s=>new Blob([s]).size;
+const prog=t=>$('prog').textContent=t||'';
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function upload(blob,mime,name){const k=S('kGem');prog(`📤 ${name} をアップロード中…`);
+ const s=await fetch(`${GB}/upload/v1beta/files`,{method:'POST',headers:{'x-goog-api-key':k,'X-Goog-Upload-Protocol':'resumable','X-Goog-Upload-Command':'start','X-Goog-Upload-Header-Content-Length':String(blob.size),'X-Goog-Upload-Header-Content-Type':mime,'Content-Type':'application/json'},body:JSON.stringify({file:{display_name:name.replace(/[^\w.-]/g,'_')}})});
+ if(!s.ok)throw new Error('upload start '+s.status);const url=s.headers.get('x-goog-upload-url');if(!url)throw new Error('upload url hidden (CORS)');
+ const u=await fetch(url,{method:'POST',headers:{'X-Goog-Upload-Command':'upload, finalize','X-Goog-Upload-Offset':'0'},body:blob});
+ if(!u.ok)throw new Error('upload '+u.status);let f=(await u.json()).file;
+ for(let i=0;f.state==='PROCESSING'&&i<60;i++){await sleep(2000);f=await (await fetch(`${GB}/v1beta/${f.name}`,{headers:{'x-goog-api-key':k}})).json()}
+ if(f.state==='FAILED')throw new Error('file processing failed');prog('');return {file_data:{mime_type:mime,file_uri:f.uri}}}
+const b64=blob=>new Promise((ok,ng)=>{const r=new FileReader();r.onload=()=>ok(r.result.split(',')[1]);r.onerror=ng;r.readAsDataURL(blob)});
+// build Gemini parts for an attachment; large → File API
+async function gPart(a){
+ if(a.kind==='img')return {inline_data:{mime_type:a.mime,data:a.data}};
+ if(a.kind==='pdf'){if(a.size>4e6){a.part=a.part||await upload(a.blob,a.mime,a.name);return a.part}return {inline_data:{mime_type:a.mime,data:await b64(a.blob)}}}
+ const bytes=tb(a.text);if(bytes<=2e5)return {text:`[添付ファイル: ${a.name}]\n${a.text}`};
+ if(bytes>4e6){a.part=a.part||await upload(new Blob([a.text],{type:'text/plain'}),'text/plain',a.name);return [{text:`[添付ファイル: ${a.name}]`},a.part]}
+ return [{text:`[添付ファイル: ${a.name}]`},{inline_data:{mime_type:'text/plain',data:await b64(new Blob([a.text],{type:'text/plain'}))}}]}
+function partsFor(x,multi){let t=x.t||'';for(const a of x.a||[]){if(a.kind==='txt')t+=`\n\n[添付ファイル: ${a.name}]\n${a.text.slice(0,30000)}${a.text.length>30000?'\n…(長いため省略。このモデルでは全文は扱えません)':''}`;else t+=`\n\n[${a.kind==='img'?'画像':'PDF'}「${a.name}」が添付されていますが、このモデルでは中身を見られません。そのことを伝えてください]`}
+ return [{text:t.trim()||'(添付のみ)'}]}
+async function gContents(h){const out=[];for(const x of h){const p=[{text:x.t||(x.a?.length?'これを見て':'…')}];
+ if(x.r==='u'&&x.a)for(const a of x.a){const r=await gPart(a);Array.isArray(r)?p.push(...r):p.push(r)}out.push({role:x.r==='u'?'user':'model',parts:p})}return out}
+async function gCall(contents,sys,maxTok=8192){const k=S('kGem');if(!k)throw{skip:1};const models=[...new Set([S('mGem')||'gemini-3.8-flash','gemini-3.5-flash-lite','gemini-flash-latest'])];let err;
+ for(const m of models)for(let tr=0;tr<3;tr++){try{
+  const r=await fetch(`${GB}/v1beta/models/${m}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':k},
+   body:JSON.stringify({systemInstruction:{parts:[{text:sys}]},contents,generationConfig:{maxOutputTokens:maxTok,temperature:.9}})});
+  if(!r.ok){const body=await r.text();const e=new Error('Gemini '+m+' '+r.status+' '+body.slice(0,300));e.status=r.status;e.tooBig=r.status===400&&/token|too large|exceeds|size/i.test(body);
+   if(r.status===429){const d=+(body.match(/"retryDelay":\s*"(\d+)/)||[])[1];if(d&&d<=70&&tr<2){prog(`⏳ 制限中… ${d}秒待って再試行`);await sleep(d*1000+500);continue}}throw e}
+  const j=await r.json();const t=(j.candidates?.[0]?.content?.parts||[]).filter(p=>p.text&&!p.thought).map(p=>p.text).join('');if(!t)throw new Error('empty '+(j.candidates?.[0]?.finishReason||''));return t}
+  catch(e){err=e;if(e.tooBig)throw e;break}}throw err}
+const LIMIT=600000,CH=150000;
+async function gemini(h,sys){
+ const last=h[h.length-1],big=(last.a||[]).filter(a=>a.kind==='txt'),tot=big.reduce((s,a)=>s+estTok(a.text),0);
+ if(tot>LIMIT)return chunked(h,sys,last,big);
+ try{return await gCall(await gContents(h),sys)}catch(e){if((e.tooBig||e.status===429)&&tot>CH)return chunked(h,sys,last,big);throw e}}
+async function chunked(h,sys,last,big){
+ const pieces=[];for(const a of big){let i=0,n=0;const t=a.text;while(i<t.length){let j=i,tok=0;const step=20000;while(j<t.length&&tok<CH){const s=t.slice(j,j+step);tok+=estTok(s);j+=step}j=Math.min(j,t.length);
+   if(j<t.length){const nl=t.lastIndexOf('\n',j);if(nl>i+step)j=nl+1}pieces.push({name:a.name,idx:++n,text:t.slice(i,j)});i=j}}
+ const q=last.t||'内容を要約して';const notes=[];
+ for(let k=0;k<pieces.length;k++){const p=pieces[k];prog(`📚 大きいファイルを分割処理中… ${k+1}/${pieces.length}`);setExpr('thinking',120000);
+  const r=await gCall([{role:'user',parts:[{text:`次はファイル「${p.name}」の第${p.idx}部分です（全${pieces.length}部分中${k+1}番目）。ユーザーの依頼「${q}」に答えるために必要な情報・要点・重要な引用を、日本語で箇条書きに抽出してください。前置きやタグは不要です。\n\n${p.text}`}]}],'あなたは長い文書を分割して読む正確なアシスタントです。',4096);
+  notes.push(`### 第${k+1}部分（${p.name}）\n${r}`)}
+ prog('🧩 まとめています…');
+ const other=(last.a||[]).filter(a=>a.kind!=='txt');const lp=[{text:`${q}\n\n（以下は大きな添付ファイルを${pieces.length}分割して読んだメモです。これを統合して答えてください）\n\n${notes.join('\n\n')}`}];
+ for(const a of other){const r=await gPart(a);Array.isArray(r)?lp.push(...r):lp.push(r)}
+ const prev=await gContents(h.slice(0,-1));const out=await gCall([...prev,{role:'user',parts:lp}],sys);prog('');return out}
 async function openai(url,k,model,h,sys,extra={}){if(!k)throw{skip:1};
  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+k,...extra},
   body:JSON.stringify({model,max_tokens:4096,temperature:.9,messages:[{role:'system',content:sys},...h.map(x=>({role:x.r==='u'?'user':'assistant',content:partsFor(x,false)[0].text}))]})});
  if(!r.ok)throw new Error(url+' '+r.status);const j=await r.json();return j.choices[0].message.content}
-const providers=[(h,s)=>gemini(h,s),
+const providers=[(h,s)=>gemini(h,s).finally(()=>prog('')),
  (h,s)=>openai('https://api.groq.com/openai/v1/chat/completions',S('kGroq'),S('mGroq')||'llama-3.3-70b-versatile',h,s),
  (h,s)=>openai('https://openrouter.ai/api/v1/chat/completions',S('kOR'),S('mOR')||'openrouter/free',h,s,{'HTTP-Referer':location.origin,'X-Title':'DeskMate'})];
 async function ask(q){if(busy)return;busy=true;lastAct=performance.now();setExpr('thinking',120000);$('bubble').textContent='うーん…';
