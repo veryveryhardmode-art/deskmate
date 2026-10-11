@@ -55,7 +55,7 @@ small{opacity:.6}
 <label>OpenRouterモデル</label><input id="mOR" placeholder="openrouter/free">
 <label>声の速さ</label><input id="rate" type="number" step="0.1" min="0.5" max="2" placeholder="1.1">
 <small>キーはこの端末のlocalStorageだけに保存されます。</small><br>
-<button id="save">保存</button> <button id="clr" style="background:#555;color:#fff">会話履歴を消す</button> <button id="close" style="background:#333;color:#fff">閉じる</button></div>
+<button id="save">保存</button> <button id="clr" style="background:#555;color:#fff">会話を消す</button> <button id="close" style="background:#333;color:#fff">閉じる</button></div>
 <script>
 const $=id=>document.getElementById(id),LS=localStorage;
 const S=k=>LS.getItem('dm_'+k)||'',W=(k,v)=>LS.setItem('dm_'+k,v);
@@ -63,7 +63,7 @@ const F={kGem:'kGem',mGem:'mGem',kGroq:'kGroq',mGroq:'mGroq',kOR:'kOR',mOR:'mOR'
 function openSet(){for(const k in F)$(k).value=S(k);$('set').style.display='block'}
 $('gear').onclick=openSet;$('close').onclick=()=>$('set').style.display='none';
 $('save').onclick=()=>{for(const k in F)W(k,$(k).value.trim());$('set').style.display='none';say('設定したよ！','happy')};
-$('clr').onclick=()=>{LS.removeItem('dm_hist');alert('履歴を消しました')};
+$('clr').onclick=async()=>{if(!confirm('会話をすべて消しますか？'))return;LS.removeItem('dm_hist');logArr=[];$('log').innerHTML='';await idb.del('log');await idb.del('job');alert('会話を消しました')};
 if(!S('kGem'))setTimeout(openSet,300);
 
 /* ---------- face ---------- */
@@ -140,6 +140,16 @@ $('mic').onclick=()=>{
  rec.start()};
 function sendTxt(){const q=$('txt').value.trim();if(!q&&!atts.length)return;speechSynthesis.speak(new SpeechSynthesisUtterance(''));$('txt').value='';$('heard').textContent=q;ask(q);$('txt').blur()}
 $('txt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();sendTxt()}});$('send').onclick=sendTxt;
+/* ---------- persistence (IndexedDB) ---------- */
+const idb=(()=>{let dbp;const db=()=>dbp||(dbp=new Promise((ok,ng)=>{const r=indexedDB.open('deskmate',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>ok(r.result);r.onerror=()=>ng(r.error)}));
+ const tx=async(m,f)=>{const d=await db();return new Promise((ok,ng)=>{const t=d.transaction('kv',m),s=t.objectStore('kv'),r=f(s);t.oncomplete=()=>ok(r&&r.result);t.onerror=()=>ng(t.error)})};
+ return{get:k=>tx('readonly',s=>s.get(k)),set:(k,v)=>tx('readwrite',s=>s.put(v,k)).catch(e=>console.warn('idb',e)),del:k=>tx('readwrite',s=>s.delete(k))}})();
+let logArr=[],restoring=false;const saveLog=()=>idb.set('log',logArr.slice(-300));
+const saveAtts=()=>idb.set('atts',atts.map(({part,...a})=>a));
+function saveAll(){saveLog();saveAtts();LS.setItem('dm_draft',$('txt').value);if(curJob)idb.set('job',curJob)}
+addEventListener('pagehide',saveAll);document.addEventListener('visibilitychange',()=>{if(document.hidden)saveAll()});
+$('txt').addEventListener('input',()=>LS.setItem('dm_draft',$('txt').value));
+let curJob=null;
 /* ---------- attachments ---------- */
 let atts=[];const TXT=/^(text\/|application\/(json|xml|javascript|x-yaml))|\.(txt|md|json|csv|html?|js|ts|py|css|xml|ya?ml)$/i;
 $('att').onclick=()=>$('file').click();
@@ -157,7 +167,7 @@ async function addFile(f){try{const name=f.name||('image.'+(f.type.split('/')[1]
  else{alert('この形式は未対応です: '+name);return}
  atts.push(a);chips()}catch(e){alert('読み込み失敗: '+e.message)}}
 const fmtN=n=>n>=1e4?(n/1e4).toFixed(n>=1e5?0:1)+'万':String(n);
-function chips(){$('chips').innerHTML='';atts.forEach((a,i)=>{const d=document.createElement('div');d.className='chip';
+function chips(){if(!restoring)saveAtts();$('chips').innerHTML='';atts.forEach((a,i)=>{const d=document.createElement('div');d.className='chip';
  d.innerHTML=(a.thumb?`<img src="${a.thumb}">`:`<b>${a.kind==='pdf'?'📄':'📝'}</b>`)+`<span>${esc(a.name)}${a.text?` (${fmtN(a.text.length)}字)`:a.size?` (${(a.size/1e6).toFixed(1)}MB)`:''}</span><button>×</button>`;
  d.querySelector('button').onclick=()=>{atts.splice(i,1);chips()};$('chips').appendChild(d)})}
 
@@ -180,7 +190,7 @@ async function saveFile(fn,text){const ext=fn.split('.').pop().toLowerCase(),typ
  const blob=new Blob([ext==='csv'?'\ufeff'+text:text],{type});const file=new File([blob],fn,{type:MIME[ext]||'text/plain'});
  try{if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:fn});return}}catch(e){if(e.name==='AbortError')return}
  const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=fn;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),6e4)}
-function logMsg(r,t,files=[]){const d=document.createElement('div');d.className='m '+r;
+function logMsg(r,t,files=[]){if(!restoring){logArr.push({r,t,files:files.map(a=>({kind:a.kind,name:a.name,thumb:a.thumb}))});saveLog()}const d=document.createElement('div');d.className='m '+r;
  if(r==='u'){d.innerHTML=esc(t).replace(/\n/g,'<br>');files.forEach(a=>d.insertAdjacentHTML('beforeend',a.thumb?`<br><img src="${a.thumb}">`:`<br>${a.kind==='pdf'?'📄':'📝'} ${esc(a.name)}`))}
  else d.appendChild(render(t));$('log').appendChild(d);$('log').scrollTop=1e9}
 
@@ -235,10 +245,10 @@ async function gemini(h,sys){
 async function chunked(h,sys,last,big){
  const pieces=[];for(const a of big){let i=0,n=0;const t=a.text;while(i<t.length){let j=i,tok=0;const step=20000;while(j<t.length&&tok<CH){const s=t.slice(j,j+step);tok+=estTok(s);j+=step}j=Math.min(j,t.length);
    if(j<t.length){const nl=t.lastIndexOf('\n',j);if(nl>i+step)j=nl+1}pieces.push({name:a.name,idx:++n,text:t.slice(i,j)});i=j}}
- const q=last.t||'内容を要約して';const notes=[];
- for(let k=0;k<pieces.length;k++){const p=pieces[k];prog(`📚 大きいファイルを分割処理中… ${k+1}/${pieces.length}`);setExpr('thinking',120000);
+ const q=last.t||'内容を要約して';const notes=curJob?.notes||[];
+ for(let k=notes.length;k<pieces.length;k++){const p=pieces[k];prog(`📚 大きいファイルを分割処理中… ${k+1}/${pieces.length}（他のアプリに切り替えると一時停止します。戻ると続きから再開）`);setExpr('thinking',120000);
   const r=await gCall([{role:'user',parts:[{text:`次はファイル「${p.name}」の第${p.idx}部分です（全${pieces.length}部分中${k+1}番目）。ユーザーの依頼「${q}」に答えるために必要な情報・要点・重要な引用を、日本語で箇条書きに抽出してください。前置きやタグは不要です。\n\n${p.text}`}]}],'あなたは長い文書を分割して読む正確なアシスタントです。',4096);
-  notes.push(`### 第${k+1}部分（${p.name}）\n${r}`)}
+  notes.push(`### 第${k+1}部分（${p.name}）\n${r}`);if(curJob){curJob.notes=notes;await idb.set('job',curJob)}}
  prog('🧩 まとめています…');
  const other=(last.a||[]).filter(a=>a.kind!=='txt');const lp=[{text:`${q}\n\n（以下は大きな添付ファイルを${pieces.length}分割して読んだメモです。これを統合して答えてください）\n\n${notes.join('\n\n')}`}];
  for(const a of other){const r=await gPart(a);Array.isArray(r)?lp.push(...r):lp.push(r)}
@@ -250,13 +260,17 @@ async function openai(url,k,model,h,sys,extra={}){if(!k)throw{skip:1};
 const providers=[(h,s)=>gemini(h,s).finally(()=>prog('')),
  (h,s)=>openai('https://api.groq.com/openai/v1/chat/completions',S('kGroq'),S('mGroq')||'llama-3.3-70b-versatile',h,s),
  (h,s)=>openai('https://openrouter.ai/api/v1/chat/completions',S('kOR'),S('mOR')||'openrouter/free',h,s,{'HTTP-Referer':location.origin,'X-Title':'DeskMate'})];
-async function ask(q){if(busy)return;busy=true;lastAct=performance.now();setExpr('thinking',120000);$('bubble').textContent='うーん…';
- const cur=atts;atts=[];chips();const ana=anaMode;
+async function ask(q){if(busy)return;
+ const cur=atts;atts=[];chips();const ana=anaMode;LS.removeItem('dm_draft');
  logMsg('u',(ana?'🔍 ':'')+q,cur);
- const h=hist().map(x=>({r:x.r,t:x.t}));h.push({r:'u',t:q,a:cur});
+ const h=hist().map(x=>({r:x.r,t:x.t}));h.push({r:'u',t:q,a:cur.map(({part,...a})=>a)});
+ const big=cur.some(a=>a.kind==='txt'&&a.text.length>2e5);
+ curJob=big?{q,ana,h,notes:[]}:null;if(curJob)await idb.set('job',curJob);
+ return runAI(q,ana,h,cur)}
+async function runAI(q,ana,h,cur){busy=true;lastAct=performance.now();setExpr('thinking',120000);$('bubble').textContent='うーん…';
  const sys=SYS+(ana?ANA:'');let out=null,errs=[];
  for(const p of providers){try{out=await p(h.slice(-12),sys);break}catch(e){if(!e.skip)errs.push(e.message)}}
- busy=false;
+ busy=false;if(out||!curJob){curJob=null;idb.del('job')}
  if(!out){console.warn(errs);logMsg('a','⚠️ '+errs.join('\n'));say(S('kGem')?'ごめんね、今ちょっと頭が回らないみたい。少し待ってからまた話しかけてね':'設定でAPIキーを入れてね','sad');return}
  let m=out.trim().match(/^\s*\[(\w+)\]\s*/),ex='neutral';out=out.trim();if(m){ex=m[1].toLowerCase();out=out.slice(m[0].length)}
  out=out.replace(/^\[(happy|sad|surprised|thinking|sleepy|angry|neutral)\]/gim,'').trim();
@@ -268,4 +282,16 @@ async function ask(q){if(busy)return;busy=true;lastAct=performance.now();setExpr
  if(long){const s=speak.match(/^.*?[。！？!?]/);speak=(s?s[0]:speak.slice(0,60));if(!speak)speak='できたよ！';speak+=' 詳しくはチャットを見てね';
   if(!$('log').classList.contains('open'))$('logb').click()}
  say(speak,ex)}
+
+(async()=>{try{restoring=true;
+ logArr=(await idb.get('log'))||[];for(const m of logArr)logMsg(m.r,m.t,m.files||[]);
+ atts=(await idb.get('atts'))||[];chips();restoring=false;
+ const d=LS.getItem('dm_draft');if(d)$('txt').value=d;
+ const j=await idb.get('job');
+ if(j){const n=j.notes?.length||0;const box=document.createElement('div');box.className='m a';box.innerHTML=`⏸ 途中で止まった処理があります（${n}部分まで完了）<div class="fc"><button>続きから再開</button><button style="background:#555;color:#fff">やめる</button></div>`;
+  const [go,no]=box.querySelectorAll('button');let started=false;const start=()=>{if(started||busy)return;started=true;box.remove();curJob=j;runAI(j.q,j.ana,j.h,j.h[j.h.length-1].a||[])};
+  go.onclick=start;no.onclick=()=>{started=true;box.remove();idb.del('job')};$('log').appendChild(box);if(!$('log').classList.contains('open'))$('logb').click();
+  $('bubble').textContent='続きから再開するね…';setTimeout(()=>{if(S('kGem')&&!document.hidden)start()},2500)}
+}catch(e){restoring=false;console.warn('restore',e)}})();
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&curJob&&!busy){runAI(curJob.q,curJob.ana,curJob.h,curJob.h[curJob.h.length-1].a||[])}});
 </script></body></html>
